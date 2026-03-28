@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NDX 纳指100 波段信号监控</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #f8fafc;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .config-section { background: var(--card-bg); padding: 15px; border-radius: 12px; margin-bottom: 20px; display: flex; gap: 10px; align-items: center; justify-content: center; }
+        input { padding: 8px; border-radius: 6px; border: none; width: 250px; }
+        button { padding: 8px 16px; background: var(--accent-blue); color: white; border: none; border-radius: 6px; cursor: pointer; }
+        
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card { background: var(--card-bg); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+        .full-width { grid-column: 1 / -1; }
+        
+        .signal-box { font-size: 24px; font-weight: bold; text-align: center; padding: 20px; border-radius: 8px; margin-top: 10px; }
+        .buy { background: rgba(34, 197, 94, 0.2); color: var(--accent-green); border: 1px solid var(--accent-green); }
+        .sell { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); }
+        .hold { background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); border: 1px solid var(--accent-blue); }
+        
+        .metric { display: flex; justify-content: space-between; margin: 10px 0; border-bottom: 1px solid #334155; padding-bottom: 5px; }
+        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>NDX 纳指100 波段信号监控</h1>
+        <p>基于 20日均线、RSI 与波动率逻辑</p>
+    </div>
+
+    <div class="config-section">
+        <input type="text" id="apiKey" placeholder="输入你的 Twelve Data API Key" value="">
+        <button onclick="fetchData()">刷新数据</button>
+    </div>
+
+    <div class="grid">
+        <div class="card full-width">
+            <h2>当前交易建议</h2>
+            <div id="adviceDisplay" class="signal-box hold">等待数据输入...</div>
+            <p id="adviceReasoning" style="margin-top: 15px; color: #94a3b8; font-size: 14px; line-height: 1.6;"></p>
+        </div>
+
+        <div class="card">
+            <h3>技术指标</h3>
+            <div class="metric"><span>最新价格:</span> <span id="price">-</span></div>
+            <div class="metric"><span>RSI (14):</span> <span id="rsi">-</span></div>
+            <div class="metric"><span>SMA (20):</span> <span id="sma20">-</span></div>
+            <div class="metric"><span>趋势状态:</span> <span id="trend">-</span></div>
+        </div>
+
+        <div class="card">
+            <h3>市场环境</h3>
+            <div class="metric"><span>波动率状态:</span> <span id="volStatus">监控中</span></div>
+            <div class="metric"><span>回撤深度:</span> <span id="drawdown">-</span></div>
+            <p style="font-size: 12px; color: #64748b;">注：VXN数据通常需专业接口，此处通过日内波幅模拟计算。</p>
+        </div>
+    </div>
+</div>
+
+<script>
+async function fetchData() {
+    const apiKey = document.getElementById('apiKey').value;
+    if (!apiKey) { alert('请输入 API Key'); return; }
+
+    const symbol = 'QQQ'; // 纳指100 ETF 
+    const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=1day&outputsize=30&apikey=${apiKey}`;
+    
+    try {
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (data.status !== 'ok') throw new Error(data.message);
+
+        const prices = data.values.map(v => parseFloat(v.close));
+        const latestPrice = prices[0];
+        const prevPrice = prices[1];
+        
+        // 1. 计算 SMA 20
+        const sma20 = prices.slice(0, 20).reduce((a, b) => a + b) / 20;
+        
+        // 2. 简单 RSI 计算 (简化版)
+        let gains = 0, losses = 0;
+        for(let i=0; i<14; i++) {
+            let diff = prices[i] - prices[i+1];
+            diff > 0 ? gains += diff : losses -= diff;
+        }
+        const rsi = 100 - (100 / (1 + (gains / losses)));
+
+        // 3. 模拟波动率 (基于日内高低价差趋势)
+        const dailyRange = parseFloat(data.values[0].high) - parseFloat(data.values[0].low);
+        const avgRange = data.values.slice(0, 10).reduce((acc, v) => acc + (v.high - v.low), 0) / 10;
+        const volSpike = dailyRange > avgRange * 1.5;
+
+        updateUI(latestPrice, sma20, rsi, volSpike);
+        
+    } catch (error) {
+        console.error(error);
+        alert('数据获取失败: ' + error.message);
+    }
+}
+
+function updateUI(price, sma20, rsi, volSpike) {
+    document.getElementById('price').innerText = `$${price.toFixed(2)}`;
+    document.getElementById('rsi').innerText = rsi.toFixed(2);
+    document.getElementById('sma20').innerText = `$${sma20.toFixed(2)}`;
+    
+    const adviceBox = document.getElementById('adviceDisplay');
+    const reasonBox = document.getElementById('adviceReasoning');
+    const trendSpan = document.getElementById('trend');
+
+    let advice = "";
+    let reason = "";
+
+    // 交易逻辑引擎
+    if (price < sma20 && rsi < 35) {
+        advice = "BUY / 逢低买入";
+        adviceBox.className = "signal-box buy";
+        reason = "价格跌破20日线且RSI进入超卖区，处于‘黄金坑’捕捉点。";
+    } else if (price > sma20 * 1.05 && rsi > 70) {
+        advice = "SELL / 减仓信号";
+        adviceBox.className = "signal-box sell";
+        reason = "价格偏离均线过远且RSI超买，波段见顶风险加大。";
+    } else if (price > sma20) {
+        advice = "HOLD / 趋势持股";
+        adviceBox.className = "signal-box hold";
+        reason = "价格站稳20日线上方，上涨趋势完好，建议持仓。";
+    } else {
+        advice = "WAIT / 观望";
+        adviceBox.className = "signal-box hold";
+        reason = "趋势不明朗，建议等待RSI极端值或均线收复。";
+    }
+
+    if (volSpike) {
+        reason += " 注意：监控到市场波动率异常放大，建议严格控制止损。";
+        document.getElementById('volStatus').innerText = "异常放大";
+        document.getElementById('volStatus').style.color = "var(--accent-red)";
+    } else {
+        document.getElementById('volStatus').innerText = "平稳";
+        document.getElementById('volStatus').style.color = "var(--accent-green)";
+    }
+
+    trendSpan.innerText = price > sma20 ? "多头" : "空头";
+    trendSpan.style.color = price > sma20 ? "var(--accent-green)" : "var(--accent-red)";
+    adviceBox.innerText = advice;
+    reasonBox.innerText = "信号解析：" + reason;
+}
+</script>
+
+</body>
+</html>
